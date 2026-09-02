@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>EL ÚLTIMO TESTIGO — 2D Mystery</title>
+<style>
+:root{--bg:#070a11;--panel:#111827;--line:#3e4a63;--text:#edf1fa;--muted:#9ba7bd;--gold:#f2c86b;--red:#d95b61;--green:#56b984}
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:var(--bg);color:var(--text);font-family:Inter,system-ui,Arial,sans-serif}
+canvas{display:block;margin:auto;background:#0d111b;image-rendering:pixelated}
+#hud{position:fixed;left:15px;top:15px;z-index:5;background:#080b12e8;border:1px solid var(--line);border-radius:14px;padding:12px 15px;width:275px;box-shadow:0 10px 35px #0008}
+.hrow{display:flex;justify-content:space-between;margin:4px 0}.gold{color:var(--gold)}.muted{color:var(--muted)}
+.bar{height:7px;background:#252b39;border-radius:9px;overflow:hidden;margin-top:9px}.bar i{display:block;height:100%;width:100%;background:var(--gold)}
+#help{position:fixed;right:15px;top:15px;z-index:5;background:#080b12e8;border:1px solid var(--line);border-radius:12px;padding:10px 13px;font-size:12px;text-align:right;line-height:1.5}
+#objective{position:fixed;left:50%;top:15px;transform:translateX(-50%);z-index:5;background:#080b12e8;border:1px solid var(--line);border-radius:12px;padding:10px 18px;font-size:13px}
+#log{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);width:min(760px,92vw);z-index:6;background:#080b12ed;border:1px solid var(--line);border-radius:12px;padding:12px 16px;text-align:center;font-size:14px}
+#modal,#start{position:fixed;inset:0;z-index:30;display:flex;align-items:center;justify-content:center;background:#000c}
+#modal{display:none}.panel,.startbox{width:min(820px,92vw);max-height:88vh;overflow:auto;background:linear-gradient(145deg,#121927,#0d1320);border:1px solid #4a5874;border-radius:20px;padding:25px;box-shadow:0 25px 100px #000}
+.startbox{text-align:center}.startbox h1{font-size:42px;letter-spacing:3px;margin:8px 0 12px}.knife{font-size:54px}
+button{border:1px solid #56647c;background:#202a3d;color:#fff;padding:11px 14px;border-radius:10px;cursor:pointer;font-weight:750;margin:4px}button:hover{background:#303b51;transform:translateY(-1px)}
+.good{background:#20533c}.danger{background:#562c32}.goldbtn{background:#5b4a23}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px}.cards button{text-align:left}
+.card{background:#171f2e;border:1px solid #35425b;border-radius:12px;padding:13px}.card h3{margin:0 0 5px}.tag{display:inline-block;padding:3px 7px;border-radius:99px;background:#252f43;color:#bdc7d9;font-size:11px}
+hr{border:0;border-top:1px solid #303b51;margin:18px 0}
+#notebook{display:none;position:fixed;right:15px;top:125px;z-index:8;width:310px;max-height:58vh;overflow:auto;background:#0b101aef;border:1px solid var(--line);border-radius:14px;padding:15px}
+.clue{padding:9px;border-left:3px solid var(--gold);background:#151d2b;margin:8px 0;border-radius:6px;font-size:12px}
+@media(max-width:700px){#objective{display:none}#help{font-size:10px}.startbox h1{font-size:30px}}
+</style>
+</head>
+<body>
+<div id="start"><div class="startbox">
+<div class="knife">🔪</div><h1>EL ÚLTIMO TESTIGO</h1>
+<p class="muted">Misterio 2D • Caso procedural • Rejugable</p>
+<p>Alguien ha muerto dentro de la mansión. El asesino está entre los presentes.</p>
+<p><b>Investiga. Interroga. Conecta las pistas. Acusa.</b></p>
+<button class="good" id="startBtn">COMENZAR CASO</button>
+<p class="muted" style="font-size:12px">WASD / Flechas · E investigar · F acusar · N libreta · R nuevo caso</p>
+</div></div>
+
+<canvas id="game" width="1100" height="680"></canvas>
+<div id="hud">
+ <div class="hrow"><span>⏱️ Tiempo</span><b class="gold" id="time">06:00</b></div>
+ <div class="hrow"><span>🧩 Pistas</span><b id="clues">0/7</b></div>
+ <div class="hrow"><span>💬 Interrogatorios</span><b id="talks">0/5</b></div>
+ <div class="bar"><i id="timerbar"></i></div>
+</div>
+<div id="objective">🎯 Objetivo: encuentra al asesino</div>
+<div id="help"><b>WASD / Flechas</b> mover<br><b>E</b> investigar / hablar<br><b>F</b> acusar<br><b>N</b> libreta · <b>R</b> reiniciar</div>
+<div id="log">Busca objetos con brillo dorado y habla con las personas.</div>
+<div id="notebook"><h3>📓 Libreta del detective</h3><div id="notes"></div></div>
+<div id="modal"><div class="panel" id="panel"></div></div>
+
+<script>
+const canvas=document.getElementById('game'),ctx=canvas.getContext('2d');
+const W=canvas.width,H=canvas.height;
+const keys={};let running=false,last=0,timeLeft=360,cluesFound=0,talks=0,killer=0,selected=0;
+let clues=[],found=[],suspects=[],caseData={};
+const rooms=[
+{x:35,y:35,w:320,h:275,name:"Biblioteca"},
+{x:390,y:35,w:320,h:275,name:"Sala"},
+{x:745,y:35,w:320,h:275,name:"Comedor"},
+{x:35,y:350,w:320,h:295,name:"Dormitorio"},
+{x:390,y:350,w:320,h:295,name:"Estudio"},
+{x:745,y:350,w:320,h:295,name:"Cocina"}
+];
+const names=["Valentina","Bruno","Camila","Diego","Elena"];
+const roles=["escritora","abogado","fotógrafa","médico","pianista"];
+const portraits=["👩🏻","👨🏻","👩🏼","👨🏽","👩🏽"];
+const colors=["#cf6b73","#6592cf","#b77ad0","#5eaf82","#d0aa59"];
+const motives=["una deuda secreta","un manuscrito robado","una herencia millonaria","una vieja venganza","un secreto familiar"];
+const weapons=["un candelabro","un abrecartas","una estatuilla","un pisapapeles","una cuerda"];
+const hours=["21:10","21:25","21:40","21:55"];
+const places=["Biblioteca","Sala","Comedor","Dormitorio","Estudio","Cocina"];
+const player={x:550,y:325,s:190};
+
+function shuffle(a){return [...a].sort(()=>Math.random()-.5)}
+function rand(n){return Math.floor(Math.random()*n)}
+function fmt(t){return String(Math.floor(t/60)).padStart(2,"0")+":"+String(Math.floor(t%60)).padStart(2,"0")}
+function log(t){document.getElementById("log").textContent=t}
+function roomCenter(i){let r=rooms[i];return{x:r.x+r.w/2,y:r.y+r.h/2}}
+
+function newCase(){
+ killer=rand(5);
+ const weapon=weapons[rand(weapons.length)], motive=motives[rand(motives.length)], hour=hours[rand(hours.length)];
+ const crimeRoom=places.indexOf(["Biblioteca","Sala","Comedor","Dormitorio","Estudio","Cocina"][rand(6)]);
+ caseData={weapon,motive,hour,crimeRoom,crimePlace:places[crimeRoom]};
+ found=[];cluesFound=0;talks=0;timeLeft=360;selected=0;
+ // Seven clues. Two are "soft" clues that reveal relationships rather than directly naming the killer.
+ const cRooms=shuffle([0,1,2,3,4,5,rand(6),rand(6)]);
+ clues=[
+  {room:crimeRoom,text:`El reloj del lugar quedó detenido exactamente a las ${hour}.`,kind:"HORARIO"},
+  {room:cRooms[1],text:`Se encontró ${weapon} con una pequeña marca reciente.`,kind:"ARMA"},
+  {room:cRooms[2],text:`Una carta menciona ${motive}.`,kind:"MOTIVO"},
+  {room:cRooms[3],text:`Una huella conduce desde esta habitación hacia ${caseData.crimePlace}.`,kind:"RUTA"},
+  {room:cRooms[4],text:`Una fotografía demuestra que una persona mintió sobre dónde estaba.`,kind:"COARTADA"},
+  {room:cRooms[5],text:`Un testigo oyó una discusión poco antes de las ${hour}.`,kind:"TESTIMONIO"},
+  {room:cRooms[6],text:`Una nota oculta dice: “El culpable intentará parecer el más tranquilo”.`,kind:"NOTA"}
+ ];
+ // Generate statements; killer has a deliberately inconsistent alibi.
+ suspects=names.map((name,i)=>{
+   let alibiRoom=(i+2+rand(4))%6;
+   if(i===killer) alibiRoom=caseData.crimeRoom;
+   return {name,role:roles[i],portrait:portraits[i],color:colors[i],alibi:alibiRoom,
+    statement:i===killer
+      ? `Afirma que estuvo en ${rooms[alibiRoom].name} y que no se acercó al lugar del crimen.`
+      : `Afirma que estuvo en ${rooms[alibiRoom].name} durante el momento aproximado del crimen.`,
+    detail:i===killer
+      ? "Responde demasiado rápido y evita explicar qué hizo durante varios minutos."
+      : "Su relato parece consistente, aunque todavía necesitas comprobarlo."};
+ });
+ updateUI();updateNotes();resetPlayer();
+ log("Nuevo caso generado. Examina cada habitación.");
+}
+
+function resetPlayer(){player.x=550;player.y=325}
+function updateUI(){
+ document.getElementById("clues").textContent=cluesFound+"/7";
+ document.getElementById("talks").textContent=talks+"/5";
+ document.getElementById("time").textContent=fmt(Math.max(0,timeLeft));
+ document.getElementById("timerbar").style.width=Math.max(0,timeLeft/360*100)+"%";
+}
+function roomAt(x,y){return rooms.findIndex(r=>x>r.x&&x<r.x+r.w&&y>r.y&&y<r.y+r.h)}
+function nearbyClue(){return clues.findIndex((c,i)=>!found.includes(i)&&Math.hypot(player.x-(roomCenter(c.room).x),player.y-(roomCenter(c.room).y))<65)}
+function nearbySuspect(){return suspects.findIndex((s)=>{let p=roomCenter(s.alibi);return Math.hypot(player.x-p.x,player.y-p.y)<70})}
+
+function interact(){
+ let ci=nearbyClue();
+ if(ci>=0){found.push(ci);cluesFound++;log("🧩 "+clues[ci].kind+": "+clues[ci].text);updateUI();updateNotes();return}
+ let si=nearbySuspect();
+ if(si>=0){talks=Math.min(5,talks+1);updateUI();showInterview(si);return}
+ log("Aquí no hay nada que puedas investigar.");
+}
+
+function updateNotes(){
+ document.getElementById("notes").innerHTML=found.length?found.map(i=>`<div class="clue"><b>${clues[i].kind}</b><br>${clues[i].text}</div>`).join(""):"<p class='muted'>Todavía no tienes pistas.</p>";
+}
+
+function showInterview(i){
+ const s=suspects[i];
+ openModal(`<h2>${s.portrait} ${s.name}</h2><span class="tag">${s.role}</span>
+ <p><b>Declaración:</b><br>“${s.statement}”</p>
+ <p><b>Observación:</b> ${s.detail}</p>
+ <hr><p class="muted">Consejo: compara las coartadas con las pistas de ruta, horario y lugar del crimen.</p>
+ <button onclick="closeModal()">Continuar investigando</button>`);
+}
+
+function accusation(){
+ if(!running)return;
+ openModal(`<h2>⚖️ Acusación</h2>
+ <p>Selecciona al sospechoso que crees responsable.</p>
+ <div class="cards">${suspects.map((s,i)=>`<button class="${selected===i?'goldbtn':''}" onclick="selected=${i};accusation()">
+ ${s.portrait} <b>${s.name}</b><br><span class="muted">${s.role}</span></button>`).join("")}</div>
+ <hr><p class="muted">Pistas reunidas: ${cluesFound}/7 · Interrogatorios: ${talks}/5</p>
+ <button class="danger" onclick="makeAccusation()">CONFIRMAR ACUSACIÓN</button>
+ <button onclick="closeModal()">Cancelar</button>`);
+}
+function makeAccusation(){
+ running=false;
+ if(selected===killer){
+   openModal(`<h2>🎉 ¡CASO RESUELTO!</h2>
+   <p>Has descubierto que <b>${suspects[killer].name}</b> era el asesino.</p>
+   <div class="card"><b>Reconstrucción del caso</b><br>
+   Motivo: ${caseData.motive}<br>Arma: ${caseData.weapon}<br>Hora: ${caseData.hour}<br>Lugar: ${caseData.crimePlace}</div>
+   <p>Investigaste ${cluesFound}/7 pistas y hablaste con ${talks}/5 sospechosos.</p>
+   <button class="good" onclick="restart()">🔄 JUGAR OTRO CASO</button>`);
+ }else{
+   openModal(`<h2>💀 CASO FALLIDO</h2>
+   <p>Acusaste a <b>${suspects[selected].name}</b>, pero la evidencia no era suficiente.</p>
+   <p>El verdadero asesino era <b>${suspects[killer].name}</b>.</p>
+   <div class="card">El caso: ${caseData.crimePlace}, ${caseData.hour}. El arma: ${caseData.weapon}.</div>
+   <button class="danger" onclick="restart()">🔄 REINTENTAR</button>`);
+ }
+}
+function openModal(h){document.getElementById("panel").innerHTML=h;document.getElementById("modal").style.display="flex"}
+function closeModal(){document.getElementById("modal").style.display="none"}
+function restart(){closeModal();newCase();running=true;last=performance.now();}
+
+function draw(){
+ ctx.clearRect(0,0,W,H);
+ ctx.fillStyle="#080c14";ctx.fillRect(0,0,W,H);
+ // floor and rooms
+ rooms.forEach((r,i)=>{
+   ctx.fillStyle=i%2?"#182130":"#151d2a";ctx.fillRect(r.x,r.y,r.w,r.h);
+   ctx.strokeStyle="#4b5870";ctx.lineWidth=3;ctx.strokeRect(r.x,r.y,r.w,r.h);
+   ctx.fillStyle="#8f9bb1";ctx.font="bold 15px Arial";ctx.fillText(r.name,r.x+14,r.y+24);
+   // furniture
+   ctx.fillStyle="#242e40";
+   ctx.fillRect(r.x+18,r.y+50,75,32);
+   ctx.fillRect(r.x+r.w-92,r.y+r.h-70,70,38);
+   ctx.fillStyle="#303b50";ctx.fillRect(r.x+r.w/2-20,r.y+r.h/2-12,40,24);
+ });
+ // central corridor
+ ctx.fillStyle="#0e141f";ctx.fillRect(355,285,390,65);
+ ctx.fillRect(355,305,20,45);ctx.fillRect(725,305,20,45);
+ // decorative windows
+ rooms.forEach(r=>{ctx.strokeStyle="#53647d";ctx.strokeRect(r.x+r.w/2-30,r.y+7,60,9)});
+ // clues
+ clues.forEach((c,i)=>{
+  if(found.includes(i))return;
+  let p=roomCenter(c.room),pulse=2+Math.sin(performance.now()/180)*2;
+  ctx.beginPath();ctx.arc(p.x,p.y,10+pulse,0,Math.PI*2);ctx.fillStyle="#f2c86b";ctx.fill();
+  ctx.beginPath();ctx.arc(p.x,p.y,17+pulse,0,Math.PI*2);ctx.strokeStyle="#f2c86b66";ctx.stroke();
+ });
+ // suspects
+ suspects.forEach((s,i)=>{
+  let p=roomCenter(s.alibi);
+  ctx.fillStyle=s.color;ctx.beginPath();ctx.arc(p.x,p.y,17,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle="#fff";ctx.font="12px Arial";ctx.textAlign="center";ctx.fillText(s.name,p.x,p.y-25);ctx.textAlign="left";
+ });
+ // player
+ ctx.fillStyle="#eef3ff";ctx.beginPath();ctx.arc(player.x,player.y,14,0,Math.PI*2);ctx.fill();
+ ctx.fillStyle="#7c8dff";ctx.fillRect(player.x-10,player.y+7,20,10);
+ if(nearbyClue()>=0||nearbySuspect()>=0){ctx.fillStyle="#fff";ctx.font="bold 13px Arial";ctx.fillText("E  INTERACTUAR",player.x-53,player.y-27)}
+}
+function update(dt){
+ let dx=0,dy=0;
+ if(keys.w||keys.ArrowUp)dy--;if(keys.s||keys.ArrowDown)dy++;if(keys.a||keys.ArrowLeft)dx--;if(keys.d||keys.ArrowRight)dx++;
+ if(dx||dy){let l=Math.hypot(dx,dy);player.x+=dx/l*player.s*dt;player.y+=dy/l*player.s*dt}
+ player.x=Math.max(15,Math.min(W-15,player.x));player.y=Math.max(15,Math.min(H-15,player.y));
+ timeLeft-=dt;updateUI();
+ if(timeLeft<=0){running=false;openModal(`<h2>⏰ TIEMPO AGOTADO</h2><p>El asesino escapó antes de que pudieras resolver el caso.</p><button class="danger" onclick="restart()">🔄 REINTENTAR</button>`)}
+}
+function loop(t){let dt=Math.min(.05,(t-last)/1000);last=t;if(running)update(dt);draw();requestAnimationFrame(loop)}
+window.addEventListener("keydown",e=>{
+ keys[e.key]=true;keys[e.key.toLowerCase()]=true;
+ if(e.key.toLowerCase()==="e"&&!e.repeat)interact();
+ if(e.key.toLowerCase()==="f"&&!e.repeat)accusation();
+ if(e.key.toLowerCase()==="n"&&!e.repeat){let n=document.getElementById("notebook");n.style.display=n.style.display==="block"?"none":"block"}
+ if(e.key.toLowerCase()==="r"&&!e.repeat)restart();
+});
+window.addEventListener("keyup",e=>{keys[e.key]=false;keys[e.key.toLowerCase()]=false});
+document.getElementById("startBtn").onclick=()=>{document.getElementById("start").style.display="none";restart()};
+newCase();draw();requestAnimationFrame(loop);
+</script>
+</body>
+</html>
